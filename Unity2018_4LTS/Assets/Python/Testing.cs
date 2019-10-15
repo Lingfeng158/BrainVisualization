@@ -11,9 +11,9 @@ public class Testing : MonoBehaviour
     {
         ProcessStartInfo start = new ProcessStartInfo();
 
-        string progToRun = @"Assets/Python/test.py";
+        string progToRun = @"Assets/Python/loadNrrd.py";
 
-        int x = 1;
+        string x = @"C:\Users\lil18\Downloads\DTIBrain.nrrd";
 
         int y = 2;
 
@@ -44,6 +44,7 @@ public class Testing : MonoBehaviour
                 //Debug.Log(scope.GetVariable<string>("filename"));
                 //result can be parsed to harvest real results
                 print(result);
+                print(stderr);
 
             }
 
