@@ -1,3 +1,4 @@
+import os
 import sys
 import numpy as np
 from pynrrd import *
@@ -11,7 +12,9 @@ def main():
         #convert type
         data=data*10**15
         data=data.astype(np.int64)
-        np.save('../Assets/tmp/sample.npy', data)
+        if not os.path.exists('.\\Assets\\tmp'):
+            os.mkdir('.\\Assets\\tmp')
+        np.save('.\\Assets\\tmp/sample.npy', data)
     else:
         print ('Required to specify path to nrrd')
     return 0
