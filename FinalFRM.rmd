@@ -1,0 +1,541 @@
+---
+title: "Framingham dataset"
+author: "Doug Hardin and Alex Vlasiuk"
+modified by: "Lingfeng Li"
+nocite: |
+  @Kuhn_2013
+output:
+  pdf_document: default
+  html_notebook: default
+bibliography: stat_learning.bib
+---
+##Load library and data
+If you have not installed glmnet, see "glmnetOverview.Rmd"  and install the package.
+
+```{r, eval=T, echo=F}
+library(glmnet)
+```
+
+To begin, let's have a look at the `Framingham` dataset we want to explore. The meaning of each variable, as well as some additional background info, can be found in the [FraminghamDocumentation](./FraminghamDocumentation.pdf) file. The following table will suffice for our purposes:
+
+![](./framingham.png)
+<br>
+Next we load the data and use `str` to get a feel for what the data are like:
+```{r, eval=T}
+framingham <- read.csv("frm.csv")
+str(framingham)
+```
+The latter shows `framingham` has 40 columns with 11627 observations. The first column is the number of the observation, the second, `RANDID` tells us who are distinct patients, the column `PERIOD` identifies which of up to 3 observations were made for individual patients.  Note that `HDLC` and `LDLC` (so-called good and bad cholesterol numbers) are only available for period 3 observations.
+
+The last 8 columns contain times (in days) from the Baseline exam to either the occurence of a certain medical condition or death or loss of contact for a given patient. Notice that the `8766` value is repeated multiple times. This means that the condition (such as `CHD`) did not occur before the end of the study. More precisely, the times given
+
+> Number of days from Baseline exam to first *[medical condition]* or Number of days from Baseline to censor date. Censor date may be 
+> end of followup, death or last known contact date if subject is lost to followup.
+>
+> (from [FraminghamDocumentation](./FraminghamDocumentation.pdf))
+
+## Factors and Events
+
+
+
+We separate the data into "risk factors" and "event data" (see documentation).
+```{r}
+fnames=names(framingham)
+fnames
+```
+```{r}
+FactorNames=fnames[seq(1,24)]
+EventNames=fnames[seq(25,40)]
+```
+##CENTER AND SCALE the factor data.
+
+The following centers and scales `framFactors`:
+
+```{r}
+fhscaled<-framingham
+fhscaled[FactorNames]<-as.data.frame(scale(framingham[FactorNames]))
+str(fhscaled)
+```
+## NA values
+
+Let's check for NA values.  The following command applies to each column (here the `2` specifies that we apply along columns; i.e., along the 2nd variable) the function f(x) that counts the number of NA elements in x. 
+
+```{r}
+nacols<-apply(framingham, 2, function(x) {sum(is.na(x))})
+nacols
+```
+
+```{r}
+fhs.mis <- fhscaled[]
+```
+
+We already knew that the period 1 and 2 samples do not contain 'HDLC' and 'LDLC' so that explains why those columns have so many missing values. Also 'GLUCOSE' has 1440 NA values so we will drop these three columns in this example.  
+The command _completecases_ then finds rows with no NA values.
+
+```{r}
+fnamesKeep <- setdiff(fnames,cbind("HDLC", "LDLC","GLUCOSE"))
+fhs.noHLG<-fhscaled[fnamesKeep]
+fhs.noHLG<-fhs.noHLG[complete.cases(fhs.noHLG),]
+str(fhs.noHLG)
+```
+
+This leaves us with 10261 samples.  As an example, let's try to classify STROKE from the other variables. 
+```{r}
+factorsKeep<-setdiff(FactorNames,cbind("HDLC", "LDLC","GLUCOSE"))
+X <- as.matrix(fhs.noHLG[factorsKeep])
+y <- as.matrix(fhs.noHLG$STROKE)
+fit <- cv.glmnet(X, y, alpha=0)  #alpha=1 is lasso, alpha=0 is ridge, lambda =0 is linear regression
+plot(fit)
+```
+Let's look at beta for different values of beta.  Note log is the natural log.   Try choosing different values of lambda and also try setting s="lambda.1se" or "lambda.min".
+```{r}
+beta<-coef(fit,s=2.718^-4)
+beta
+```
+
+Let's remove the individuals who already had a stroke before the study began and see how well we can predict the first occurrence of strokes for these.  There are other ways to select rows but here we are checking selecting the rows of the data frame "fhs.noHLG" using "fhs.noHLG$PREVSTRK<1".  As seen below this reduces to 10140 samples. 
+```{r}
+fhs.noHLGPS <-  fhs.noHLG[fhs.noHLG$PREVSTRK<1,]
+str(fhs.noHLGPS)
+summary(fhs.noHLGPS$STROKE)
+```
+From the above we see that about 8% of the 10140 individuals had a first stroke during the study.  Here we again use ridge regression on the data. 
+```{r}
+X <- as.matrix(fhs.noHLGPS[factorsKeep])
+y <- as.matrix(fhs.noHLGPS$ANYCHD)
+fit <- cv.glmnet(X, y, alpha=0,type.measure="auc")  #alpha=1 is lasso, alpha=0 is ridge, lambda =0 is linear regression
+plot(fit)
+```
+```{r}
+fit$cvm
+```
+
+Let's look at beta.  Note that "log" is the natural logarithm.  You can also use s="lambda.min" or s="lambda.1se"
+```{r}
+beta<-coef(fit,s=2.718^-6)
+beta
+```
+##Some initial observations:
+  a) for this choice of lambda, TOTCHOL has a positive beta coefficient.
+  b) AGE had a positive coefficient and TIME has a negative cofficient.
+  c) HEARTRTE has a negative coefficient (that seems counterintuitive)
+  d) Check whether the coefficients for the other variables stand out as either confirming 'common sense',  being counterintuitive or maybe just not clear why it is in the classifierifier.  
+  
+  
+## Questions:
+1) (a) Use LASSO with a range of values for lambda and see the order in which the variables drop out as lambda increases.
+  (b) compare with ridge regression.
+2) (a) Drop the samples that are missing GLUCOSE values and add this column as an input variable.  With this reduced data set see if GLUCOSE is relevant to STROKE classification.  Also, rerun to see if relevant to DIABETES.  
+(b) Imputation: Use glmnet (say with LASSO)) to estimate the missing GLUCOSE values and see again how this variable affects STROKE and DIABETES classification.  
+(c) Optional: Use the function "mice"" to impute the data and compare with the imputed values you computed.
+3)  Pick a 'continuous' variable to do regression and a 'binary' variable for classification and repeat the above analysis.  
+4) For the classification problem, also apply lda and qda. Explore the role of HDLC and LDLC in CHD classification.
+  
+```{r}
+library(MASS)
+qda(X[,cbind(seq(3,14))],y)
+```
+
+```{r}
+summary(X[,seq(3,9)])
+```
+
+1) (a) Use LASSO with a range of values for lambda and see the order in which the variables drop out as lambda increases.
+
+lambda.min is the value of λ that gives minimum mean cross-validated error. The other λ saved is lambda.1se, which gives the most regularized model such that error is within one standard error of the minimum. To use that, we only need to replace lambda.min with lambda.1se above.
+
+```{r}
+X <- as.matrix(fhs.noHLGPS[factorsKeep])
+y <- as.matrix(fhs.noHLGPS$ANYCHD)
+fitLAS <- cv.glmnet(X, y, alpha=1,type.measure="auc")  #alpha=1 is lasso, alpha=0 is ridge, lambda =0 is linear regression
+plot(fitLAS)
+```
+
+This is for 1 b) Ridge
+```{r}
+X <- as.matrix(fhs.noHLGPS[factorsKeep])
+y <- as.matrix(fhs.noHLGPS$ANYCHD)
+fitRig <- cv.glmnet(X, y, alpha=0,type.measure="auc")  #alpha=1 is lasso, alpha=0 is ridge, lambda =0 is linear regression
+plot(fitRig)
+```
+
+```{r}
+newBetaL <- coef(fitLAS, s="lambda.min") #saved min
+newBetaL
+```
+```{r}
+newBetaR <- coef(fitRig, s="lambda.min") #saved min
+newBetaR
+```
+```{r}
+newBeta2 <- coef(fitLAS, s="lambda.1se")
+newBeta2
+```
+```{r}
+newBeta2R <- coef(fitRig, s="lambda.1se")
+newBeta2R
+```
+1 a) variables decrease as lambda increases
+```{r}
+newBeta3 <- coef(fitLAS, s=2.718^(-10))
+newBeta3
+```
+1 b)Ridge variables further increase as lambda increase
+```{r}
+newBeta3R <- coef(fitRig, s=2.718^(-10))
+newBeta3R
+```
+1 a) variables decrease as lambda increases
+```{r}
+newBeta4 <- coef(fitLAS, s=2.718^(-5))
+newBeta4
+```
+1 b)Ridge variables further increase as lambda increase
+```{r}
+newBeta4R <- coef(fitRig, s=2.718^(-5))
+newBeta4R
+```
+1 a) variables decrease as lambda increases
+```{r}
+newBeta5 <- coef(fitLAS, s=2.718^(-4))
+newBeta5
+```
+1 b)Ridge variables further increase as lambda increase
+```{r}
+newBeta5R <- coef(fitRig, s=2.718^(-4))
+newBeta5R
+```
+1 a) variables decrease as lambda increases
+```{r}
+newBeta6 <- coef(fitLAS, s=2.718^(-3))
+newBeta6
+```
+
+1 b)Ridge variables further increase as lambda increase
+```{r}
+newBeta6R <- coef(fitRig, s=2.718^(-3))
+newBeta6R
+```
+1 a) variables decrease as lambda increases
+```{r}
+newBeta7 <- coef(fitLAS, s=2.718^(-2))
+newBeta7
+```
+1 b)Ridge variables further increase as lambda increase
+```{r}
+newBeta7R <- coef(fitRig, s=2.718^(-2))
+newBeta7R
+```
+1 a, b summary:
+lambda increases----------->lambda increases----------->lambda increases----------->
+LASSO: newBeta2 > newBeta3 > newBeta4 > newBeta5 > newBeta6 > newBeta7 > ...
+RIDGE: newBeta2R < newBeta3R < newBeta4R < newBeta5R < newBeta6R < newBeta7R < ...
+1 a order of drop out: run code/see values in notebook
+
+2) (a) Drop the samples that are missing GLUCOSE values and add this column as an input variable.  With this reduced data set see if GLUCOSE is relevant to STROKE classification.  Also, rerun to see if relevant to DIABETES.  
+(b) Imputation: Use glmnet (say with LASSO)) to estimate the missing GLUCOSE values and see again how this variable affects STROKE and DIABETES classification.  
+(c) Optional: Use the function "mice"" to impute the data and compare with the imputed values you computed.
+2) (a)
+```{r}
+fnamesKeepNew <- setdiff(fnames,cbind("HDLC", "LDLC"))
+fhs.noHL<-fhscaled[fnamesKeepNew]
+fhs.noHLPS <-  fhs.noHL[fhs.noHLG$PREVSTRK<1,]
+fhs.noHLPSNew<-fhs.noHLPS[complete.cases(fhs.noHLPS),]
+fhs.noHLNew<-fhs.noHL[complete.cases(fhs.noHL),]
+factorsKeepNew<-setdiff(FactorNames,cbind("HDLC", "LDLC"))
+NewX <- as.matrix(fhs.noHLPSNew[factorsKeepNew])
+Newy <- as.matrix(fhs.noHLPSNew$STROKE)
+fitNew <- cv.glmnet(NewX, Newy, alpha=1) 
+NewBeta8<-coef(fitNew,s="lambda.1se")
+NewBeta8
+plot(fitNew)
+```
+
+It is relavant to Diabetes
+```{r}
+factorsKeepNen2<-setdiff(FactorNames,cbind("HDLC", "LDLC","DIABETES"))
+XNew2 <- as.matrix(fhs.noHLNew[factorsKeepNen2])
+yNew2 <- as.matrix(fhs.noHLNew$DIABETES)
+fitNew2 <- cv.glmnet(XNew2, yNew2, alpha=1) 
+NewBeta9<-coef(fitNew2,s="lambda.1se")
+NewBeta9
+plot(fitNew2)
+```
+
+
+2 b)Imputation: Use glmnet (say with LASSO)) to estimate the missing GLUCOSE values and see again how this variable affects STROKE and DIABETES classification. 
+```{r}
+fhs.NoGL <- fhs.noHL[is.na(fhs.noHL$GLUCOSE),]
+
+factorsKeepNew3 <- setdiff(FactorNames,cbind("HDLC", "LDLC","GLUCOSE"))
+fhs.noHLNew[factorsKeepNew3]
+NewX3 <- as.matrix(fhs.noHLNew[factorsKeepNew3])
+Newy3 <- as.matrix(fhs.noHLNew$GLUCOSE)
+fitNew3 <- cv.glmnet(NewX3, Newy3, alpha=1) 
+beta.glucose<-coef(fitNew3,s="lambda.1se")
+fhs.NoGL.X <- as.matrix(fhs.NoGL[factorsKeepNew3])
+predg <- predict(fitNew3,fhs.NoGL.X,s=2.718^-2)
+
+for (i in 1:1440){
+  fhs.NoGL$GLUCOSE[i] <- predg[i]
+}
+fhs.noHLnew <- rbind(fhs.NoGL,fhs.noHL)
+fhs.noHLnew <- fhs.noHLnew[complete.cases(fhs.noHLnew),]
+factorsKeepNew4<-setdiff(FactorNames,cbind("HDLC", "LDLC"))
+NewX4 <- as.matrix(fhs.noHLnew[factorsKeepNew4])
+Newy4 <- as.matrix(fhs.noHLnew$STROKE)
+fitNew4 <- cv.glmnet(NewX4, Newy4, alpha=1) 
+NewBeta11 <-coef(fitNew4,s="lambda.1se")
+NewX5 <- as.matrix(fhs.noHLnew[factorsKeepNew4])
+Newy5 <- as.matrix(fhs.noHLnew$DIABETES)
+fitNew5 <- cv.glmnet(NewX5, Newy5, alpha=1) 
+NewBeta12<-coef(fitNew5,s="lambda.1se")
+plot(fitNew3)
+predg
+plot(fitNew4)
+plot(fitNew5)
+NewBeta11
+NewBeta12
+```
+
+
+
+(c) Optional: Use the function "mice"" to impute the data and compare with the imputed values you computed.
+Install mice
+install.packages("mice", repos = "http://cran.us.r-project.org")
+```{r}
+library(mice)
+miceCal <- mice(fhs.noHL, m=3,maxit=8, meth='pmm',seed=100)
+tail(miceCal$loggedEvents, 5)
+fhs.noHLMiceLib <- complete(miceCal,1)
+```
+
+3)  Pick a 'continuous' variable to do regression and a 'binary' variable for classification and repeat the above analysis.
+Continuous: AGE
+```{r}
+factorsKeepNew5 <- setdiff(FactorNames,cbind("HDLC", "LDLC"))
+XNew6 <- as.matrix(fhs.noHLNew[factorsKeepNew5])
+yNew6 <- as.matrix(fhs.noHLNew$AGE)
+inverseXN6 <- solve(t(XNew6)%*%XNew6)
+betahatLeSq <- inverseXN6%*%t(XNew6)%*%yNew6
+yNew6preLeSq <- XNew6%*%betahatLeSq
+erLeSq <- yNew6preLeSq-yNew6
+ReSuSqLeSq <- t(erLeSq)%*% erLeSq
+fitNew6 <- cv.glmnet(XNew6, yNew6, alpha=1) 
+betahatLAS<-coef(fitNew6,s="lambda.1se")
+
+yNew6preLAS <- predict(fitNew6,XNew6,s="lambda.1se")
+erLAS <- yNew6preLAS-yNew6
+ReSuSqLAS <- t(erLAS)%*% erLAS
+print("BetaHat LASSO:")
+betahatLAS
+print("BetaHat SeSq:")
+betahatLeSq
+print("ReSuSq LeSq:") #2.501221e-21
+ReSuSqLeSq
+print("ReSuSq LASSO:") #7.730899
+ReSuSqLAS
+```
+
+Binary: DEATH
+```{r}
+XNew7 <- as.matrix(fhs.noHLNew[factorsKeepNew])
+yNew7 <- as.matrix(fhs.noHLNew$DEATH)
+inverse <- solve(t(XNew7) %*% XNew7)
+betahat1LeSq <- inverse %*% t(XNew7) %*% yNew7
+yNew7pre1LeSq <- XNew7 %*% betahat1LeSq
+  for (i in 1:length(yNew7pre1LeSq)) {
+    if (yNew7pre1LeSq[i] < 0.5){
+      yNew7pre1LeSq[i]<-0
+    } else{
+      yNew7pre1LeSq[i]<-1
+    }
+  }
+
+fitNew7 <- cv.glmnet(XNew7, yNew7, alpha=1) 
+betahat1LAS<-coef(fitNew7,s="lambda.1se")
+betahat1LAS
+yNew7pre1LAS <- predict(fitNew7,XNew7,s="lambda.1se")
+  for (i in 1:length(yNew7pre1LAS)) {
+    if (yNew7pre1LAS[i] < 0.5){
+      yNew7pre1LAS[i]<-0
+    } else{
+      yNew7pre1LAS[i]<-1
+    }
+  }
+accClLeSq <- which(yNew7pre1LeSq==yNew7)
+misClLeSq <- which(yNew7pre1LeSq!=yNew7)
+print("Classification acc w/ LeSq: ") #0.7200859
+length(accClLeSq)/(length(accClLeSq)+length(misClLeSq))
+accClLAS <- which(yNew7pre1LAS==yNew7)
+misClLAS <- which(yNew7pre1LAS!=yNew7)
+print("Classification acc w/ LASSO: ")#0.7786251
+length(accClLAS)/(length(accClLAS)+length(misClLAS))
+```
+4) For the classification problem, also apply lda and qda.  Explore the role of HDLC and LDLC in CHD classification.
+```{r}
+library("FNN")
+LDAest <- function(X,g){
+  tmpList <- list()
+  bigsum <- 0
+  N <- nrow(X)
+  for(j in 0:1){
+    
+  }
+  classifier0 <- X[g==0,]
+  mu0 <- colMeans(classifier0)
+  n <- nrow(classifier0)
+  sum <- 0
+  pi0 <- n/N
+  for(i in 1:n ){
+    difference <- classifier0[i,]-mu0
+    mul <- difference %*% t(difference)
+    sum <- sum + mul
+  }
+  sig0 <- sum
+  tmpList[[1]] <- list(mu0,pi0)
+  bigsum <- bigsum + sig0
+  classifier1 <- X[g==1,]
+  mu1 <- colMeans(classifier1)
+  n <- nrow(classifier1)
+  sum <- 0
+  pi1 <- n/N
+  for(i in 1:n ){
+    difference <- classifier0[i,]-mu1
+    mul <- difference %*% t(difference)
+    sum <- sum + mul
+  }
+  sig1 <- sum
+  tmpList[[2]] <- list(mu1,pi1)
+  bigsum <- bigsum + sig1
+  sig <- bigsum/(N-2)
+  tmpList[[3]] <- sig
+  return(tmpList)
+}
+
+LDA <- function(input, x){
+  vector <- c()
+  sig <- input[[3]]
+  invSig <- solve(sig)
+  for (i in 1:2) {
+    mu <- input[[i]][[1]]
+    pi <- input[[i]][[2]]
+    sum1 <- t(x)%*%invSig%*%mu
+    tmp2 <- -0.5*(t(mu)%*%invSig%*%mu)
+    ln.pi2 <- log(pi)
+    deltaj <- sum1+tmp2+ln.pi2
+    vector[i] <- deltaj
+  }
+  classifier <- which.max(vector)
+  classifier <- classifier-1
+  return(classifier)
+}
+
+QDAest <- function(X,g){
+  tmpList <- list()
+  Count <- nrow(X)
+  classifier0 <- X[g==0,]
+  mu0 <- colMeans(classifier0)
+  n <- nrow(classifier0)
+  pi0 <- n/Count
+  sum <- 0
+    
+  for(i in 1:n ){
+    difference <- classifier0[i,]-mu0
+    mul <- difference %*% t(difference)
+    sum <- sum + mul
+      
+  }
+  sig0 <- sum/(n-1)
+  tmpList[[1]] <- list(pi0, mu0,sig0)
+  classifier1 <- X[g==1,]
+  mu1 <- colMeans(classifier1)
+  n <- nrow(classifier1)
+  pi1 <- n/Count
+  sum <- 1
+    
+  for(i in 1:n ){
+    difference <- classifier1[i,]-mu1
+    mul <- difference %*% t(difference)
+    sum <- sum + mul
+      
+  }
+  sig1 <- sum/(n-1)
+  tmpList[[2]] <- list(pi1, mu1,sig1)
+  return(tmpList)
+}
+
+QDA <- function(input, x){
+  vector <- c()
+  for (i in 1:2) {
+    pi <- input[[i]][[1]]
+    mu <- input[[i]][[2]]
+    sig <- input[[i]][[3]]
+    
+    #print(det(sig))
+    invSig <- solve(sig)
+    s <- svd(sig)
+    dif <- x-mu
+    dif <- dif
+    sum1 <- -0.5*sum(log(s$d))
+    #print(dim(t(dif)))
+    #print(dim(invSig))
+    tmp2 <- -0.5*(t(dif)%*%invSig%*%dif)
+    ln.pi2 <- log(pi)
+    deltajVal <- sum1+tmp2+ln.pi2
+    vector[i] <- deltajVal
+  }
+  classifier <- which.max(vector)
+  classifier <- classifier-1
+  return(classifier)
+}
+```
+
+#Prediction DEATH
+```{r}
+Training <-fhscaled[fnamesKeepNew]
+Training <-Training[complete.cases(Training),]
+XTraining <- as.matrix(Training[factorsKeepNew])
+yTraining <- as.matrix(Training$DEATH)
+ctc <- length(yTraining)
+gEstLDA <- c()
+gEstQDA <- c()
+
+LDAResults <- LDAest(XTraining,yTraining)
+for(i in 1:ctc){
+  gEst <- LDA(LDAResults,XTraining[i,])
+  gEstLDA[i] <- gEst
+}
+
+QDAResult <- QDAest(XTraining,yTraining)
+for(i in 1:ctc){
+  gEst <- QDA(QDAResult,XTraining[i,])
+  gEstQDA[i] <- gEst
+}
+
+accClLDA <- which(yTraining==gEstLDA)
+n1 <- length(accClLDA)
+LDACorr <- (n1/ctc)
+
+accClQDA <- which(yTraining==gEstQDA)
+n2 <- length(accClQDA)
+QDACorr <- n2/ctc
+LDACorr <- n1/ctc
+print("LDA ACC Rate:") #0.7821697
+LDACorr
+print("QDA ACC Rate:") #0.7356606
+QDACorr
+```
+```{r}
+#From the comparison we can see that HDLC and LDLC have a great impact in CHD classification
+TrainingDS <- fhscaled[complete.cases(fhscaled),]
+XTraining <- as.matrix(TrainingDS [FactorNames])
+yTraining <- as.matrix(TrainingDS$DEATH)
+betaX<-coef(cv.glmnet(XTraining, yTraining , alpha=1),s=2.718^(-3))
+plot(cv.glmnet(XTraining, yTraining , alpha=1))
+print("Final Beta: ")
+betaX
+```
+
+
+
